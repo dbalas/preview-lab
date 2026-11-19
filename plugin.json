@@ -7,5 +7,5 @@
   "homepage": "https://github.com/dbalas/preview-lab",
   "repository": "https://github.com/dbalas/preview-lab",
   "license": "MIT",
-  "keywords": ["ui", "ux", "review", "screenshots", "feedback"]
+  "keywords": ["ui", "ux", "design-review", "accessibility", "screenshots", "visual-qa", "feedback", "agent-skills"]
 }

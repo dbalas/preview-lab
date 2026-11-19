@@ -54,7 +54,7 @@ That's it. The agent captures the screens, opens the lab in your browser, and wa
 | Agent | Command |
 |---|---|
 | Any of the [60+ supported agents](https://github.com/vercel-labs/skills/blob/main/docs/agents.md) | `npx skills add dbalas/preview-lab` |
-| Claude Code (plugin) | `/plugin install preview-lab --marketplace dbalas/preview-lab` |
+| Claude Code (plugin) | `/plugin marketplace add dbalas/preview-lab`, then `/plugin install preview-lab@preview-lab` |
 | Gemini CLI (extension) | `gemini extensions install https://github.com/dbalas/preview-lab` |
 | Anything else | Copy `skills/preview-lab/` into the agent's skills folder |
 
