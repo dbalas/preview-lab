@@ -200,7 +200,7 @@ const front = fs.readFileSync(fileURLToPath(new URL('../skills/preview-lab/SKILL
 assert.match(front, /^name: preview-lab$/m);
 for (const line of front.split('\n').filter(l => /^\w+: /.test(l))) assert.ok(!/: .*: /.test(line), `plain YAML value with ": " breaks the skills CLI: ${line}`);
 const ver = f => JSON.parse(fs.readFileSync(fileURLToPath(new URL('../' + f, import.meta.url)), 'utf8')).version;
-assert.ok(ver('plugin.json')); assert.equal(ver('.claude-plugin/plugin.json'), ver('plugin.json')); assert.equal(ver('gemini-extension.json'), ver('plugin.json'));
+assert.ok(ver('plugin.json')); assert.equal(ver('.claude-plugin/plugin.json'), ver('plugin.json')); assert.equal(ver('gemini-extension.json'), ver('plugin.json')); assert.equal(ver('package.json'), ver('plugin.json'));
 
 step('reset empties the lab and its history but keeps its code; remove keeps shots past rounds still show');
 pl('remove', 'a');

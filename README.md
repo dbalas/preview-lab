@@ -137,7 +137,7 @@ The agent's instructions are in [SKILL.md](skills/preview-lab/SKILL.md), the rev
 No install step. Run the tests (they also open the lab in a real browser when one is installed):
 
 ```bash
-node test/smoke.mjs
+npm test
 ```
 
 ## License
