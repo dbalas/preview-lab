@@ -1,0 +1,10 @@
+{
+  "name": "preview-lab",
+  "description": "Fast UI/UX screen review for coding agents: capture, review in a branded lab, feedback straight back to the session.",
+  "version": "0.4.0",
+  "author": { "name": "dbalas" },
+  "homepage": "https://github.com/dbalas/preview-lab",
+  "repository": "https://github.com/dbalas/preview-lab",
+  "license": "MIT",
+  "keywords": ["ui", "ux", "review", "screenshots", "feedback"]
+}
