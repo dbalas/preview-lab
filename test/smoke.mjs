@@ -58,18 +58,18 @@ pl('upgrade', '--force');
 assert.equal(fs.readFileSync(idx, 'utf8'), branded);
 
 step('add validates everything first: a bad file changes nothing and keeps the inbox');
-png(join(inbox, 'a.png')); fs.writeFileSync(join(inbox, 'x.html'), 'hi');
+png(join(inbox, 'a.png')); fs.writeFileSync(join(inbox, 'x.zip'), 'hi');
 fs.writeFileSync(join(inbox, 'bad.json'), JSON.stringify({ mode: 'fancy', items: [
   { id: 'a', title: 'A', shots: [{ src: 'a.png', label: 'm' }, { src: 'a.png', label: 'M' }] },
-  { id: 'b', title: 'B', shots: [{ src: 'x.html' }, { src: 'missing.png' }] },
+  { id: 'b', title: 'B', shots: [{ src: 'x.zip' }, { src: 'missing.png' }] },
   { id: 'c', title: 'C' }, { id: 'no title', shots: [] }, { id: 'd', shots: [{ src: 'a.png', label: 'Live' }] },
   { id: 'e', title: 'E', capture: { url: 'http://x' } }] }));
 r = run(project, 'add', join(inbox, 'bad.json'));
 assert.equal(r.status, 4);
-for (const msg of ['mode must be', 'share a label', 'not an image', 'shot file not found', 'nothing to show', 'bad id', 'needs a title', 'reserved', 'needs viewports'])
+for (const msg of ['mode must be', 'share a label', 'unsupported file type', 'shot file not found', 'nothing to show', 'bad id', 'needs a title', 'reserved', 'needs viewports'])
   assert.match(r.stderr, new RegExp(msg), msg);
 assert.deepEqual(manifest(lab).items, []);
-assert.deepEqual(files(inbox), ['a.png', 'bad.json', 'x.html']);
+assert.deepEqual(files(inbox), ['a.png', 'bad.json', 'x.zip']);
 assert.deepEqual(files(join(lab, 'shots')), []);
 
 step('add imports shots, defaults labels, cleans the inbox and junk');
@@ -96,6 +96,29 @@ assert.equal(manifest(lab).items[0].title, 'A');
 assert.equal(manifest(lab).items[0].note, 'n');
 assert.equal(manifest(lab).items[0].shots.length, 1);
 
+step('non-image shots (markdown, video, html…) are typed for the lab; images stay untyped');
+fs.writeFileSync(join(inbox, 'notes.md'), '# hi');
+fs.writeFileSync(join(inbox, 'i.json'), JSON.stringify([{ id: 'doc', title: 'Doc', shots: [{ src: 'notes.md' }] }]));
+pl('add', join(inbox, 'i.json'));
+assert.equal(manifest(lab).items.find(i => i.id === 'doc').shots[0].type, 'md');
+assert.equal(manifest(lab).items[0].shots[0].type, undefined);
+const docSrc = manifest(lab).items.find(i => i.id === 'doc').shots[0].src; // re-passed as a lab path, without its type
+fs.writeFileSync(join(inbox, 'i.json'), JSON.stringify([{ id: 'doc', shots: [{ src: docSrc, label: 'x' }] }]));
+pl('add', join(inbox, 'i.json'));
+assert.equal(manifest(lab).items.find(i => i.id === 'doc').shots[0].type, 'md');
+fs.writeFileSync(join(inbox, 'page.html'), '<script>parent</script>');
+fs.writeFileSync(join(inbox, 'i.json'), JSON.stringify([{ id: 'doc', shots: [{ src: 'page.html' }] }]));
+pl('add', join(inbox, 'i.json'));
+const htmlShot = manifest(lab).items.find(i => i.id === 'doc').shots[0];
+assert.equal(htmlShot.type, 'html');
+{ // served sandboxed: opened on its own, it must not act as the lab
+  const srv = spawn(process.execPath, [PL, 'serve', '--port', '0', '--timeout', '1'], { cwd: project, env }); let o = '';
+  const u = await new Promise(res => srv.stdout.on('data', d => { o += d; const m = o.match(/PREVIEW_LAB_URL (\S+)/); if (m) res(m[1]); }));
+  const rr = await fetch(u + htmlShot.src); assert.equal(rr.headers.get('content-security-policy'), 'sandbox allow-scripts'); await rr.text();
+  srv.kill(); await new Promise(res => srv.on('exit', res));
+}
+pl('remove', 'doc');
+
 step('boolean flags do not swallow the next argument');
 assert.deepEqual(pl('remove', '--force', 'c').items, ['a', 'b']);
 
@@ -119,6 +142,13 @@ assert.equal(raw('/manifest.json', { Host: `evil.example:${port}` }), 403); // D
 assert.equal(raw('/%E0%A4%A'), 400); // a malformed escape must not crash the server
 assert.equal(raw('/..%2F..%2Fsecret'), 403); // encoded traversal reaches the guard
 assert.equal((await fetch(url + 'server.json')).status, 403);
+{ // ranges (Safari needs them for video)
+  const shot = url + manifest(lab).items[0].shots[0].src, size = fs.statSync(join(lab, manifest(lab).items[0].shots[0].src)).size, get = range => fetch(shot, { headers: { range } });
+  let rr = await get('bytes=0-0'); assert.equal(rr.status, 206); assert.equal(rr.headers.get('content-range'), `bytes 0-0/${size}`); assert.equal((await rr.arrayBuffer()).byteLength, 1);
+  rr = await get('bytes=-1'); assert.equal(rr.status, 206); assert.equal(rr.headers.get('content-range'), `bytes ${size - 1}-${size - 1}/${size}`); await rr.arrayBuffer();
+  rr = await get(`bytes=${size}-`); assert.equal(rr.status, 416); await rr.arrayBuffer();
+  rr = await fetch(shot); assert.equal(rr.status, 200); assert.equal(rr.headers.get('accept-ranges'), 'bytes'); assert.equal(rr.headers.get('content-security-policy'), null); await rr.arrayBuffer();
+}
 assert.equal((await fetch(url + 'manifest.json')).status, 200); // still alive
 assert.equal(pl('status').server, url.slice(0, -1));
 assert.equal((await fetch(url + 'feedback', { method: 'POST', headers: { origin: 'http://evil.test' }, body: '{"items":[]}' })).status, 403);
@@ -295,6 +325,29 @@ else {
   assert.deepEqual(labShots.map(z => z.ok), [true, true], JSON.stringify(labShots));
   run(p3, 'stop');
   app.close();
+}
+
+step('markdown shots: nested and task lists, aligned tables, code spans, escaping');
+{
+  const h = fs.readFileSync(new URL('../skills/preview-lab/assets/lab.html', import.meta.url), 'utf8');
+  const esc = eval(h.match(/const esc = (.*);\n/)[1]);
+  const md = new Function('esc', h.slice(h.indexOf('function md(src)'), h.indexOf('const views = it =>')) + 'return md;')(esc);
+  assert.equal(md('- a\n  - b\n    - c\n  - d\n- e'), '<ul><li>a<ul><li>b<ul><li>c</li></ul></li><li>d</li></ul></li><li>e</li></ul>');
+  assert.equal(md('1. one\n   - x\n2. two'), '<ol><li>one<ul><li>x</li></ul></li><li>two</li></ol>');
+  assert.equal(md('- a\n\n- b'), '<ul><li>a</li><li>b</li></ul>');
+  assert.equal(md('- a\n  - b\n\n1. c'), '<ul><li>a<ul><li>b</li></ul></li></ul><ol><li>c</li></ol>'); // marker change starts a new list
+  assert.match(md('- [x] done\n- [ ] todo'), /checked> done.*disabled > todo/);
+  assert.equal(md('text\n| A | B |\n|:--|--:|\n| **1** | x \\| y |'),
+    '<p>text</p><div class="tbl"><table><thead><tr><th style="text-align:left">A</th><th style="text-align:right">B</th></tr></thead><tbody><tr><td style="text-align:left"><b>1</b></td><td style="text-align:right">x | y</td></tr></tbody></table></div>');
+  assert.equal(md('`**x**` and **y**'), '<p><code>**x**</code> and <b>y</b></p>');
+  assert.equal(md('<script>x</script>'), '<p>&lt;script&gt;x&lt;/script&gt;</p>');
+  assert.ok(!md('[x](javascript:alert(1))').includes('href'));
+  assert.equal(md('a | b\n---'), '<h2>a | b</h2>'); // column counts differ: not a table (a setext heading)
+  assert.equal(md('Title\n===\ntext\n\n***'), '<h1>Title</h1><p>text</p><hr>');
+  assert.equal(md('para\n- - -'), '<p>para</p><hr>');
+  assert.equal(md('|a|b|\n|-|-|\n|1|\n|1|2|3|'), '<div class="tbl"><table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td></td></tr><tr><td>1</td><td>2</td></tr></tbody></table></div>');
+  assert.equal(md('# C#\n## Title ##'), '<h1>C#</h1><h2>Title</h2>');
+  assert.equal(md('3. c\n4. d'), '<ol start="3"><li>c</li><li>d</li></ol>');
 }
 
 console.log('smoke ok');

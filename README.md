@@ -39,6 +39,7 @@ That's it. The agent captures the screens, opens the lab in your browser, and wa
 - **Feedback agents can act on.** Statuses, areas in percent of the screenshot, comments and notes arrive as a few lines of markdown, not a wall of prose.
 - **Rounds, not restarts.** Approved screens leave. After a code change only the screens whose pixels changed are tagged **Updated**. Past rounds stay one click away, read-only.
 - **Expert tips (beta).** Ask for a *complete review* and the agent adds measured UX, UI, accessibility, responsive and consistency tips, pinned to the screenshot. You tick the ones to apply.
+- **Not only screens.** Markdown, text, HTML, PDF and video files open in the same lab, so copy, docs, emails and recordings get the same review loop.
 - **Built-in screenshots.** Viewports, dark mode, full pages, single components, and states reached by clicking or typing, using the Chrome, Edge or Chromium you already have.
 - **Your brand, not ours.** The lab takes your colors, font, logo and language.
 - **Works everywhere.** Local, remote or cloud sessions; light, dark or system theme; desktop or phone.
