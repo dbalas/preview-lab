@@ -26,7 +26,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.json': 'application/json'
   '.md': 'text/markdown; charset=utf-8', '.markdown': 'text/markdown; charset=utf-8', '.txt': 'text/plain; charset=utf-8',
   '.csv': 'text/plain; charset=utf-8', '.log': 'text/plain; charset=utf-8' };
 
-const BOOL = new Set(['open', 'detach', 'in-project', 'force']);
+const BOOL = new Set(['open', 'detach', 'in-project', 'force', 'all']);
 const [cmd = 'help', ...rest] = process.argv.slice(2);
 const flags = {}, args = [];
 for (let i = 0; i < rest.length; i++) {
@@ -75,7 +75,7 @@ function forSession(base) {
 const BASE = flags['in-project'] || exists(IN_PROJECT) ? IN_PROJECT : join(HOME, `${slug(basename(root))}-${sha(root, 6)}`);
 setLab(flags.lab || forSession(BASE));
 
-const commands = { init, status, upgrade, brand, contrast: contrastCmd, export: exportLab, add, recapture, remove, round, feedback, clean: () => { const m = load(); clean(m, true); brief(m); }, reset, serve, stop, help };
+const commands = { init, status, prune: pruneCmd, upgrade, brand, contrast: contrastCmd, export: exportLab, add, recapture, remove, round, feedback, clean: () => { const m = load(); clean(m, true); brief(m); }, reset, serve, stop, help };
 
 function load() {
   if (!exists(P.manifest)) die(`NO_LAB: run "pl.mjs init" from the project root first (${lab})`, 3);
@@ -100,14 +100,16 @@ function brief(m, extra = {}) { console.log(JSON.stringify({ ok: true, round: m.
 
 function init() {
   let note;
+  const was = lab, expired = exists(P.manifest) && stale(lab); // checked before create() touches the manifest
   try { create(); } catch (e) {
     if (!['EACCES', 'EPERM', 'EROFS'].includes(e.code) || flags.lab || lab === IN_PROJECT) throw e;
     setLab(forSession(IN_PROJECT)); create(); // sandboxed harness: fall back to the project folder
     note = 'home folder not writable: the lab lives in <project>/.preview-lab/ (git-ignored)';
   }
-  const pruned = prune();
+  if (expired && lab === was && hasContent(lab)) { wipe(lab); note = [note, 'this lab was untouched for 7 days, so it was emptied (its branding is kept)'].filter(Boolean).join('; '); }
+  const { pruned, emptied } = prune();
   if (!note && SID && lab.endsWith(`--${SID.slice(0, 6)}`)) note = 'another session is using this checkout\'s main lab: this session has its own, so neither overwrites the other';
-  status({ ...(pruned ? { pruned } : {}), ...(note ? { note } : {}) });
+  status({ ...(pruned ? { pruned } : {}), ...(emptied ? { emptied } : {}), ...(note ? { note } : {}) });
 }
 
 function create() {
@@ -127,7 +129,9 @@ function create() {
   }
 }
 
-const otherLabs = () => (exists(HOME) ? fs.readdirSync(HOME).map(d => join(HOME, d)) : []).filter(d => d !== lab && exists(join(d, 'manifest.json')))
+const labDirs = () => [...(exists(HOME) ? fs.readdirSync(HOME).map(d => join(HOME, d)) : []),
+  ...fs.readdirSync(root).filter(d => /^\.preview-lab(--\w+)?$/.test(d)).map(d => join(root, d))]; // in-project labs of this checkout too
+const otherLabs = () => labDirs().filter(d => d !== lab && exists(join(d, 'manifest.json')))
   .map(d => { try { return { dir: d, m: readJson(join(d, 'manifest.json')) }; } catch { return null; } }).filter(x => x?.m.previewLab);
 function siblingIndex() {
   const hits = otherLabs().filter(x => x.m.repo === repo && exists(join(x.dir, 'index.html')))
@@ -135,13 +139,33 @@ function siblingIndex() {
     .filter(x => indexState(x.html) === 'ok').sort((a, b) => b.t - a.t);
   return hits[0]?.html;
 }
-// Labs whose checkout no longer exists (deleted worktrees, removed projects) are garbage, and so are other sessions' labs untouched for 14 days.
-function prune() {
-  let n = 0;
-  const old = d => basename(d).includes('--') && Date.now() - fs.statSync(join(d, 'manifest.json')).mtimeMs > 14 * 24 * 3600e3 && !serving(d);
-  for (const x of otherLabs()) if ((x.m.root && !exists(x.m.root)) || old(x.dir)) { fs.rmSync(x.dir, { recursive: true, force: true }); n++; }
-  return n;
+// Retention, one rule: a lab untouched for 7 days and not being served expires. Session labs (<lab>--<id>) and labs whose
+// checkout is gone are deleted; a checkout's main lab is emptied but keeps its code, so its branding survives.
+const TTL = 7 * 24 * 3600e3;
+const stale = (d, ttl = TTL) => Date.now() - fs.statSync(join(d, 'manifest.json')).mtimeMs >= ttl && !serving(d);
+const hasContent = d => { const m = readJson(join(d, 'manifest.json')); return !!(m.items?.length || m.history?.length || ['shots', 'inbox'].some(x => exists(join(d, x)) && fs.readdirSync(join(d, x)).length)); };
+function wipe(dir) { // empty a lab: no items, rounds, shots, inbox or feedback; keeps its code, identity and owner
+  const f = join(dir, 'manifest.json'), m = readJson(f);
+  for (const k of ['title', 'subtitle', 'mode', 'categories', 'devices', 'history']) delete m[k];
+  m.items = []; m.round = 1;
+  for (const x of ['shots', 'inbox']) if (exists(join(dir, x))) for (const y of fs.readdirSync(join(dir, x))) fs.rmSync(join(dir, x, y), { recursive: true, force: true });
+  for (const x of ['feedback.json', 'feedback.md']) fs.rmSync(join(dir, x), { force: true });
+  fs.writeFileSync(f + '.tmp', JSON.stringify(m, null, 1)); fs.renameSync(f + '.tmp', f);
 }
+function prune(ttl = TTL) {
+  let pruned = 0, emptied = 0;
+  for (const x of otherLabs()) {
+    try {
+      if (x.m.root && !exists(x.m.root) && !serving(x.dir)) { fs.rmSync(x.dir, { recursive: true, force: true }); pruned++; }
+      else if (!stale(x.dir, ttl)) continue;
+      else if (basename(x.dir).includes('--')) { fs.rmSync(x.dir, { recursive: true, force: true }); pruned++; }
+      else if (hasContent(x.dir)) { wipe(x.dir); emptied++; }
+    } catch {} // a lab another process is changing right now: next time
+  }
+  return { pruned, emptied };
+}
+// prune [--all]: apply the retention rule now; --all expires every other lab that is not being served, whatever its age.
+function pruneCmd() { console.log(JSON.stringify({ ok: true, ...prune(flags.all ? 0 : TTL) })); }
 
 // upgrade: current template + this lab's BRAND blocks. Edits outside the blocks would be lost, so they need --force.
 function upgrade() {
@@ -372,11 +396,8 @@ function feedback() {
 }
 
 function reset() {
-  const m = load();
-  for (const k of ['title', 'subtitle', 'mode', 'categories', 'devices']) delete m[k];
-  m.items = []; m.round = 1; delete m.history;
-  fs.rmSync(P.feedback, { force: true }); fs.rmSync(P.md, { force: true });
-  clean(m, true); save(m); brief(m);
+  load(); wipe(lab);
+  const m = load(); clean(m, true); save(m); brief(m);
 }
 
 // Everything the manifest does not reference goes. The inbox is only emptied once its files were imported (or on clean/reset).
@@ -497,6 +518,7 @@ function help() {
   stop                      stop a running lab server
   round [--keep N]          archive this round (read-only in the lab; the last 5 are kept), drop approved items, start the next one
   clean | reset             delete unreferenced files | empty the lab (keeps its code)
+  prune [--all]             expire labs untouched for 7 days now (--all: every other lab not being served); init does this too
 options: --project <dir>  --lab <dir>  --session <id>
 env: PREVIEW_LAB_HOME (default ~/.preview-lab), PREVIEW_LAB_CHROME, PREVIEW_LAB_SESSION (else CLAUDE_CODE_SESSION_ID): labs are per session`);
 }

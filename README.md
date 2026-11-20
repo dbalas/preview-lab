@@ -120,6 +120,7 @@ Your agent runs these; you never have to. They live in `skills/preview-lab/scrip
 | `round [--keep N]` | Archive the round, drop approved items, start the next one. |
 | `contrast <fg> <bg>` | WCAG contrast ratio of two colors. |
 | `upgrade` / `clean` / `reset` | Update the lab code, delete unused files, or start over. |
+| `prune [--all]` | Labs untouched for 7 days expire by themselves (emptied, branding kept; session labs deleted). This runs it now; `--all` clears every other lab right away. |
 
 The agent's instructions are in [SKILL.md](skills/preview-lab/SKILL.md), the review guide in [complete-mode.md](skills/preview-lab/references/complete-mode.md), and the lab's design contract in [lab-spec.md](skills/preview-lab/references/lab-spec.md).
 

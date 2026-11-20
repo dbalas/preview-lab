@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import assert from 'node:assert/strict';
 import { capture, findBrowser } from '../skills/preview-lab/scripts/capture.mjs';
@@ -219,6 +219,33 @@ step('sessions: another session on the same checkout gets its own lab and never 
   assert.equal(asB('status').lab, b.lab); assert.equal(pl('status').lab, lab); // each keeps finding its own
   const old = new Date(Date.now() - 15 * 24 * 3600e3); fs.utimesSync(join(b.lab, 'manifest.json'), old, old);
   pl('init'); assert.equal(fs.existsSync(b.lab), false); // idle session labs are pruned
+}
+
+step('retention: labs untouched for 7 days expire; main labs keep their branding; prune --all; in-project labs');
+{
+  const ago = (d, days) => { const t = new Date(Date.now() - days * 24 * 3600e3); fs.utimesSync(join(d, 'manifest.json'), t, t); };
+  const other = join(tmp, 'other'); fs.mkdirSync(other); git(other, 'init', '-q');
+  const inOther = (...a) => { const r = spawnSync(process.execPath, [PL, ...a], { cwd: other, env, encoding: 'utf8', input: a.includes('-') ? JSON.stringify([{ id: 'o', title: 'O', shots: [{ src: join(tmp, 'o.png') }] }]) : undefined }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  png(join(tmp, 'o.png'), 'other');
+  const o = inOther('init'); inOther('add', '-'); const oIndex = fs.readFileSync(join(o.lab, 'index.html'), 'utf8');
+  ago(o.lab, 6); assert.deepEqual(pl('prune'), { ok: true, pruned: 0, emptied: 0 }); // not yet
+  ago(o.lab, 8); assert.deepEqual(pl('prune'), { ok: true, pruned: 0, emptied: 1 });
+  assert.deepEqual(manifest(o.lab).items, []); assert.deepEqual(files(join(o.lab, 'shots')), []);
+  assert.equal(fs.readFileSync(join(o.lab, 'index.html'), 'utf8'), oIndex); // branding survives
+  ago(o.lab, 8); assert.equal(pl('prune').emptied, 0); // nothing left to empty
+  // the lab being opened expires too: a review after a week starts clean
+  inOther('add', '-'); ago(o.lab, 8);
+  const again = inOther('init'); assert.deepEqual(again.items, []); assert.match(again.note, /untouched for 7 days/);
+  inOther('add', '-'); assert.equal(inOther('status').items.length, 1); // and it is fresh again, not expired
+  // prune --all: every other lab not being served, whatever its age
+  const sessionLab = join(home, basename(lab) + '--abcdef'); fs.cpSync(o.lab, sessionLab, { recursive: true });
+  const r = JSON.parse(run(project, 'prune', '--all').stdout);
+  assert.equal(fs.existsSync(sessionLab), false); assert.deepEqual(manifest(o.lab).items, []); assert.ok(r.pruned >= 1 && r.emptied >= 1);
+  assert.ok(manifest(lab).items.length); // never the current lab
+  // in-project labs of this checkout are found too
+  const inProj = join(project, '.preview-lab--abcdef'); fs.cpSync(o.lab, inProj, { recursive: true }); ago(inProj, 8);
+  assert.equal(pl('prune').pruned, 1); assert.equal(fs.existsSync(inProj), false);
+  fs.rmSync(o.lab, { recursive: true, force: true });
 }
 
 step('complete mode: recommendations are validated, archived with their round and not carried into the next');
