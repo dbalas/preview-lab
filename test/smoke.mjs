@@ -13,7 +13,7 @@ const PL = fileURLToPath(new URL('../skills/preview-lab/scripts/pl.mjs', import.
 const tmp = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'pl-test-')));
 const project = join(tmp, 'proj'), home = join(tmp, 'home');
 fs.mkdirSync(project);
-const env = { ...process.env, PREVIEW_LAB_HOME: home };
+const env = { ...process.env, PREVIEW_LAB_HOME: home, PREVIEW_LAB_SESSION: 'session-a' };
 const run = (cwd, ...a) => spawnSync(process.execPath, [PL, ...a], { cwd, env, encoding: 'utf8' });
 const pl = (...a) => { const r = run(project, ...a); if (r.status !== 0) throw new Error(`pl ${a.join(' ')} → ${r.status}\n${r.stderr}`); return JSON.parse(r.stdout); };
 const files = d => fs.readdirSync(d).sort();
@@ -178,6 +178,19 @@ git(project, 'worktree', 'remove', '--force', wt);
 assert.equal(pl('init').pruned, 1);
 assert.equal(fs.existsSync(wtLab), false);
 
+step('sessions: another session on the same checkout gets its own lab and never touches this one');
+{
+  const asB = (...a) => { const r = spawnSync(process.execPath, [PL, ...a], { cwd: project, env: { ...env, PREVIEW_LAB_SESSION: 'session-b' }, encoding: 'utf8', input: a.includes('-') ? JSON.stringify([{ id: 'a', title: 'B', shots: [{ src: join(tmp, 'b.png') }] }]) : undefined }); assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  png(join(tmp, 'b.png'), 'from b');
+  const before = JSON.stringify(manifest(lab)), shotsBefore = files(join(lab, 'shots'));
+  const b = asB('init'); assert.notEqual(b.lab, lab); assert.match(b.note, /own/); assert.equal(b.index, 'ok'); // branding is shared
+  asB('add', '-'); asB('reset');
+  assert.equal(JSON.stringify(manifest(lab)), before); assert.deepEqual(files(join(lab, 'shots')), shotsBefore);
+  assert.equal(asB('status').lab, b.lab); assert.equal(pl('status').lab, lab); // each keeps finding its own
+  const old = new Date(Date.now() - 15 * 24 * 3600e3); fs.utimesSync(join(b.lab, 'manifest.json'), old, old);
+  pl('init'); assert.equal(fs.existsSync(b.lab), false); // idle session labs are pruned
+}
+
 step('complete mode: recommendations are validated, archived with their round and not carried into the next');
 const recs = [{ id: 'r0', type: 'responsive', severity: 'medium', text: 'Wraps at 390px' }, { id: 'r1', type: 'a11y', severity: 'high', text: 'Raise contrast', area: { x: 1, y: 2, w: 3, h: 4 } }, { id: 'r2', type: 'copy', severity: 'low', text: 'Shorter' }];
 const addRecs = list => spawnSync(process.execPath, [PL, 'add', '-'], { cwd: project, env, encoding: 'utf8', input: JSON.stringify({ mode: 'complete', items: [{ id: 'a', recommendations: list }] }) });
@@ -214,7 +227,7 @@ assert.notEqual(run(project, 'init', '--lab', foreign).status, 0);
 assert.ok(fs.existsSync(join(foreign, 'keep.txt')));
 s = pl('init', '--in-project');
 assert.equal(s.lab, join(project, '.preview-lab'));
-assert.match(fs.readFileSync(join(project, '.gitignore'), 'utf8'), /^\.preview-lab\/$/m);
+assert.match(fs.readFileSync(join(project, '.gitignore'), 'utf8'), /^\.preview-lab\*\/$/m);
 
 if (process.platform !== 'win32') {
   step('home not writable: falls back to the project folder');
